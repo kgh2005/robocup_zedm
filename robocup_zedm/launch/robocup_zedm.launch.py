@@ -66,5 +66,5 @@ def generate_launch_description():
     return LaunchDescription([
         zed_launch,
         detection_node,
-        # refiner_node
+        refiner_node
     ])
