@@ -64,6 +64,15 @@ class RefinerNode(Node):
         self.det_ball = []   # list of (score, x1,y1,x2,y2)
         self.det_line = []
         self.det_robot = []
+        
+        # ---------- Refined results ---------- 
+        self.ball_cam_u = 0
+        self.ball_cam_v = 0
+        self.ball_dist_mm = 0.0
+        self.ball_2d_x_mm = 0.0
+        self.ball_2d_y_mm = 0.0
+        self.robot_vec_x_mm = []
+        self.robot_vec_y_mm = []
 
         # ---------- Messages ----------
         self.vision_msg = Robocupvision25()
@@ -87,6 +96,33 @@ class RefinerNode(Node):
         self.width = int(msg.width)
         self.height = int(msg.height)
         self.have_caminfo = True
+        
+    def publish_vision_msg(self):
+        self.vision_msg.ball_cam_x = int(self.ball_cam_u)
+        self.vision_msg.ball_cam_y = int(self.ball_cam_v)
+
+
+        if self.ball_dist_mm == 0.0:
+            self.vision_msg.ball_2d_x = 0.0
+            self.vision_msg.ball_2d_y = 0.0
+        else:
+            self.vision_msg.ball_2d_x = float(self.ball_2d_x_mm)
+            self.vision_msg.ball_2d_y = float(self.ball_2d_y_mm)
+
+        self.vision_msg.ball_d = float(self.ball_dist_mm)
+
+        self.vision_pub.publish(self.vision_msg)
+        
+        self.vision_msg.robot_vec_x = []
+        self.vision_msg.robot_vec_y = []
+    
+    def publish_vision_feature_msg(self):
+        self.vision_feature_pub.publish(self.vision_feature_msg)
+        self.vision_feature_msg.confidence = []
+        self.vision_feature_msg.distance = []
+        self.vision_feature_msg.point_vec_x = []
+        self.vision_feature_msg.point_vec_y = []
+
 
     def depth_callback(self, msg: Image):
         try:
@@ -145,12 +181,6 @@ class RefinerNode(Node):
         h, w = depth_copy.shape[:2]
 
         # ===== BALL =====
-        ball_cam_u = 0
-        ball_cam_v = 0
-        ball_dist_mm = 0.0
-        ball_2d_x_mm = 0.0
-        ball_2d_y_mm = 0.0
-
         if len(self.det_ball) > 0:
             score, x1, y1, x2, y2 = self.det_ball[0]
             u = x1 + (x2 - x1) // 2
@@ -160,85 +190,62 @@ class RefinerNode(Node):
             v = int(np.clip(v, 0, h - 1))
 
             X, Y, Z = pixel_to_cam_coords(depth_copy, u, v, self.fx, self.fy, self.cx, self.cy, self.half_win)
+            if Z >= 0.0:
+                self.ball_cam_u = u
+                self.ball_cam_v = v
+                self.ball_dist_mm = Z * 1000.0
+                self.ball_2d_x_mm = X * 1000.0 * (-1.0)
+                self.ball_2d_y_mm = Z * 1000.0
 
-            if Z > 0.0:
-                ball_cam_u = u
-                ball_cam_v = v
-
-                ball_dist_mm = Z * 1000.0
-                ball_2d_x_mm = X * 1000.0 * (-1.0)
-                ball_2d_y_mm = Z * 1000.0
 
                 self.get_logger().info("========== ball ==========")
                 self.get_logger().info(f"pixel (u,v) = ({u},{v})")
                 self.get_logger().info(f"cam_pt = [X={X:.3f}, Y={Y:.3f}, Z={Z:.3f}] meters")
                 self.get_logger().info(f"cam_pt = [X={X*100.0:.1f}, Y={Y*100.0:.1f}, Z={Z*100.0:.1f}] cm")
-            else:
-                self.get_logger().info(f"ball depth invalid at (u={u},v={v})")
-
-        # ===== LINE FEATURES =====
-        for score, x1, y1, x2, y2 in self.det_line:
-            u = x1 + (x2 - x1) // 2
-            v = y1 + (y2 - y1) // 2
-            u = int(np.clip(u, 0, w - 1))
-            v = int(np.clip(v, 0, h - 1))
-
-            X, Y, Z = pixel_to_cam_coords(depth_copy, u, v, self.fx, self.fy, self.cx, self.cy, self.half_win)
-            if Z <= 0.0:
-                continue
-
-            dist_mm = Z * 1000.0
-            if dist_mm < float(self.remove_space_dis):
-                self.vision_feature_msg.confidence.append(float(score))
-                self.vision_feature_msg.distance.append(float(dist_mm))
-                self.vision_feature_msg.point_vec_x.append(float(X * 1000.0 * (-1.0)))
-                self.vision_feature_msg.point_vec_y.append(float(Z * 1000.0))
-
-        # ===== ROBOTS =====
-        robot_vec_x_mm = []
-        robot_vec_y_mm = []
-        for score, x1, y1, x2, y2 in self.det_robot:
-            u = x1 + (x2 - x1) // 2
-            v = y1 + (y2 - y1) // 2
-            u = int(np.clip(u, 0, w - 1))
-            v = int(np.clip(v, 0, h - 1))
-
-            X, Y, Z = pixel_to_cam_coords(depth_copy, u, v, self.fx, self.fy, self.cx, self.cy, self.half_win)
-            if Z <= 0.0:
-                continue
-
-            robot_vec_x_mm.append(X * 1000.0 * (-1.0))
-            robot_vec_y_mm.append(Z * 1000.0)
-
-        # publish (C++와 동일한 필드 의미로 채움)
-        self.vision_msg.ball_cam_x = int(ball_cam_u)
-        self.vision_msg.ball_cam_y = int(ball_cam_v)
-
-
-        if ball_dist_mm == 0.0:
-            self.vision_msg.ball_2d_x = 0.0
-            self.vision_msg.ball_2d_y = 0.0
         else:
-            self.vision_msg.ball_2d_x = float(ball_2d_x_mm)
-            self.vision_msg.ball_2d_y = float(ball_2d_y_mm)
-
-        self.vision_msg.ball_d = float(ball_dist_mm)
-
-        self.vision_msg.robot_vec_x = [float(x) for x in robot_vec_x_mm]
-        self.vision_msg.robot_vec_y = [float(y) for y in robot_vec_y_mm]
-
-        self.vision_pub.publish(self.vision_msg)
+            self.ball_cam_u = 0
+            self.ball_cam_v = 0
+            self.ball_dist_mm = 0.0
+            self.ball_2d_x_mm = 0.0
+            self.ball_2d_y_mm = 0.0
         
-        self.vision_msg.robot_vec_x = []
-        self.vision_msg.robot_vec_y = []
+        if len(self.det_line) > 0:
+            # ===== LINE FEATURES =====
+            for score, x1, y1, x2, y2 in self.det_line:
+                u = x1 + (x2 - x1) // 2
+                v = y1 + (y2 - y1) // 2
+                u = int(np.clip(u, 0, w - 1))
+                v = int(np.clip(v, 0, h - 1))
+
+                X, Y, Z = pixel_to_cam_coords(depth_copy, u, v, self.fx, self.fy, self.cx, self.cy, self.half_win)
+                if Z <= 0.0:
+                    continue
+
+                dist_mm = Z * 1000.0
+                if dist_mm < float(self.remove_space_dis):
+                    self.vision_feature_msg.confidence.append(float(score))
+                    self.vision_feature_msg.distance.append(float(dist_mm))
+                    self.vision_feature_msg.point_vec_x.append(float(X * 1000.0 * (-1.0)))
+                    self.vision_feature_msg.point_vec_y.append(float(Z * 1000.0))
+                    
+        if len(self.det_robot) > 0:
+            for score, x1, y1, x2, y2 in self.det_robot:
+                u = x1 + (x2 - x1) // 2
+                v = y1 + (y2 - y1) // 2
+                u = int(np.clip(u, 0, w - 1))
+                v = int(np.clip(v, 0, h - 1))
+
+                X, Y, Z = pixel_to_cam_coords(depth_copy, u, v, self.fx, self.fy, self.cx, self.cy, self.half_win)
+                if Z <= 0.0:
+                    continue
+
+                dist_mm = Z * 1000.0
+                self.vision_msg.robot_vec_x.append(X * 1000.0 * (-1.0))
+                self.robot_vec_y_mm.append(Z * 1000.0)
 
 
-        if len(self.vision_feature_msg.confidence) > 0:
-            self.vision_feature_pub.publish(self.vision_feature_msg)
-            self.vision_feature_msg.confidence = []
-            self.vision_feature_msg.distance = []
-            self.vision_feature_msg.point_vec_x = []
-            self.vision_feature_msg.point_vec_y = []
+        self.publish_vision_msg()
+        self.publish_vision_feature_msg()
 
 
 def main(args=None):
