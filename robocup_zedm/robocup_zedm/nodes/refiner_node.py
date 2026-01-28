@@ -9,7 +9,7 @@ from sensor_msgs.msg import Image, CameraInfo
 from cv_bridge import CvBridge
 
 from vision_interfaces.msg import BoundingBox
-from humanoid_interfaces.msg import Robocupvision25, Robocupvision25feature
+from vision_interfaces.msg import Robocupvision, Robocupvisionfeatures
 
 # utils로 분리한 함수들
 from robocup_zedm.utils.utils import pixel_to_cam_coords
@@ -20,8 +20,8 @@ class RefinerNode(Node):
         super().__init__('refiner_node')
 
         # ---------- Publishers ----------
-        self.vision_pub = self.create_publisher(Robocupvision25, 'vision', 10)
-        self.vision_feature_pub = self.create_publisher(Robocupvision25feature, 'vision_feature', 10)
+        self.vision_pub = self.create_publisher(Robocupvision, 'vision', 10)
+        self.vision_feature_pub = self.create_publisher(Robocupvisionfeatures, 'vision_feature', 10)
 
         # ---------- Parameters ----------
         self.declare_parameter('depth_topic', '/zed/zed_node/depth/depth_registered')
@@ -62,8 +62,10 @@ class RefinerNode(Node):
 
         # ---------- Detection caches ----------
         self.det_ball = []   # list of (score, x1,y1,x2,y2)
-        self.det_line = []
         self.det_robot = []
+        self.det_corner_line = []
+        self.det_t_line = []
+        self.det_cross_line = []
         
         # ---------- Refined results ---------- 
         self.ball_cam_u = 0
@@ -75,8 +77,8 @@ class RefinerNode(Node):
         self.robot_vec_y_mm = []
 
         # ---------- Messages ----------
-        self.vision_msg = Robocupvision25()
-        self.vision_feature_msg = Robocupvision25feature()
+        self.vision_msg = Robocupvision()
+        self.vision_feature_msg = Robocupvisionfeatures()
 
         # ---------- Subscriptions ----------
         self.create_subscription(BoundingBox, self.bbox_topic, self.bbox_callback, 10)
@@ -118,10 +120,21 @@ class RefinerNode(Node):
     
     def publish_vision_feature_msg(self):
         self.vision_feature_pub.publish(self.vision_feature_msg)
-        self.vision_feature_msg.confidence = []
-        self.vision_feature_msg.distance = []
-        self.vision_feature_msg.point_vec_x = []
-        self.vision_feature_msg.point_vec_y = []
+        
+        self.vision_feature_msg.corner_confidence = []
+        self.vision_feature_msg.corner_distance = []
+        self.vision_feature_msg.corner_point_vec_x = []
+        self.vision_feature_msg.corner_point_vec_y = []
+        
+        self.vision_feature_msg.t_confidence = []
+        self.vision_feature_msg.t_distance = []
+        self.vision_feature_msg.t_point_vec_x = []
+        self.vision_feature_msg.t_point_vec_y = []
+        
+        self.vision_feature_msg.cross_confidence = []
+        self.vision_feature_msg.cross_distance = []
+        self.vision_feature_msg.cross_point_vec_x = []
+        self.vision_feature_msg.cross_point_vec_y = []
 
 
     def depth_callback(self, msg: Image):
@@ -143,8 +156,10 @@ class RefinerNode(Node):
 
     def bbox_callback(self, msg: BoundingBox):
         self.det_ball.clear()
-        self.det_line.clear()
         self.det_robot.clear()
+        self.det_corner_line.clear()
+        self.det_t_line.clear()
+        self.det_cross_line.clear()
 
         n = len(msg.class_ids)
 
@@ -162,9 +177,13 @@ class RefinerNode(Node):
             if cls == 0:
                 self.det_ball.append((score, x1, y1, x2, y2))
             elif cls == 1:
-                self.det_line.append((score, x1, y1, x2, y2))
-            elif cls == 2:
                 self.det_robot.append((score, x1, y1, x2, y2))
+            elif cls == 2:
+                self.det_corner_line.append((score, x1, y1, x2, y2))
+            elif cls == 3:
+                self.det_t_line.append((score, x1, y1, x2, y2))
+            elif cls == 4:
+                self.det_cross_line.append((score, x1, y1, x2, y2))
 
         self.bbox_processing()
 
@@ -198,10 +217,10 @@ class RefinerNode(Node):
                 self.ball_2d_y_mm = Z * 1000.0
 
 
-                self.get_logger().info("========== ball ==========")
-                self.get_logger().info(f"pixel (u,v) = ({u},{v})")
-                self.get_logger().info(f"cam_pt = [X={X:.3f}, Y={Y:.3f}, Z={Z:.3f}] meters")
-                self.get_logger().info(f"cam_pt = [X={X*100.0:.1f}, Y={Y*100.0:.1f}, Z={Z*100.0:.1f}] cm")
+                # self.get_logger().info("========== ball ==========")
+                # self.get_logger().info(f"pixel (u,v) = ({u},{v})")
+                # self.get_logger().info(f"cam_pt = [X={X:.3f}, Y={Y:.3f}, Z={Z:.3f}] meters")
+                # self.get_logger().info(f"cam_pt = [X={X*100.0:.1f}, Y={Y*100.0:.1f}, Z={Z*100.0:.1f}] cm")
         else:
             self.ball_cam_u = 0
             self.ball_cam_v = 0
@@ -209,25 +228,6 @@ class RefinerNode(Node):
             self.ball_2d_x_mm = 0.0
             self.ball_2d_y_mm = 0.0
         
-        if len(self.det_line) > 0:
-            # ===== LINE FEATURES =====
-            for score, x1, y1, x2, y2 in self.det_line:
-                u = x1 + (x2 - x1) // 2
-                v = y1 + (y2 - y1) // 2
-                u = int(np.clip(u, 0, w - 1))
-                v = int(np.clip(v, 0, h - 1))
-
-                X, Y, Z = pixel_to_cam_coords(depth_copy, u, v, self.fx, self.fy, self.cx, self.cy, self.half_win)
-                if Z <= 0.0:
-                    continue
-
-                dist_mm = Z * 1000.0
-                if dist_mm < float(self.remove_space_dis):
-                    self.vision_feature_msg.confidence.append(float(score))
-                    self.vision_feature_msg.distance.append(float(dist_mm))
-                    self.vision_feature_msg.point_vec_x.append(float(X * 1000.0 * (-1.0)))
-                    self.vision_feature_msg.point_vec_y.append(float(Z * 1000.0))
-                    
         if len(self.det_robot) > 0:
             for score, x1, y1, x2, y2 in self.det_robot:
                 u = x1 + (x2 - x1) // 2
@@ -242,6 +242,65 @@ class RefinerNode(Node):
                 dist_mm = Z * 1000.0
                 self.vision_msg.robot_vec_x.append(X * 1000.0 * (-1.0))
                 self.robot_vec_y_mm.append(Z * 1000.0)
+        
+        if len(self.det_corner_line) > 0:
+            # ===== LINE FEATURES =====
+            for score, x1, y1, x2, y2 in self.det_corner_line:
+                u = x1 + (x2 - x1) // 2
+                v = y1 + (y2 - y1) // 2
+                u = int(np.clip(u, 0, w - 1))
+                v = int(np.clip(v, 0, h - 1))
+
+                X, Y, Z = pixel_to_cam_coords(depth_copy, u, v, self.fx, self.fy, self.cx, self.cy, self.half_win)
+                if Z <= 0.0:
+                    continue
+
+                dist_mm = Z * 1000.0
+                if dist_mm < float(self.remove_space_dis):
+                    self.vision_feature_msg.corner_confidence.append(float(score))
+                    self.vision_feature_msg.corner_distance.append(float(dist_mm))
+                    self.vision_feature_msg.corner_point_vec_x.append(float(X * 1000.0 * (-1.0)))
+                    self.vision_feature_msg.corner_point_vec_y.append(float(Z * 1000.0))
+        
+        if len(self.det_t_line) > 0:
+            # ===== LINE FEATURES =====
+            for score, x1, y1, x2, y2 in self.det_t_line:
+                u = x1 + (x2 - x1) // 2
+                v = y1 + (y2 - y1) // 2
+                u = int(np.clip(u, 0, w - 1))
+                v = int(np.clip(v, 0, h - 1))
+
+                X, Y, Z = pixel_to_cam_coords(depth_copy, u, v, self.fx, self.fy, self.cx, self.cy, self.half_win)
+                if Z <= 0.0:
+                    continue
+
+                dist_mm = Z * 1000.0
+                if dist_mm < float(self.remove_space_dis):
+                    self.vision_feature_msg.t_confidence.append(float(score))
+                    self.vision_feature_msg.t_distance.append(float(dist_mm))
+                    self.vision_feature_msg.t_point_vec_x.append(float(X * 1000.0 * (-1.0)))
+                    self.vision_feature_msg.t_point_vec_y.append(float(Z * 1000.0))
+                    
+        if len(self.det_cross_line) > 0:
+            # ===== LINE FEATURES =====
+            for score, x1, y1, x2, y2 in self.det_cross_line:
+                u = x1 + (x2 - x1) // 2
+                v = y1 + (y2 - y1) // 2
+                u = int(np.clip(u, 0, w - 1))
+                v = int(np.clip(v, 0, h - 1))
+
+                X, Y, Z = pixel_to_cam_coords(depth_copy, u, v, self.fx, self.fy, self.cx, self.cy, self.half_win)
+                if Z <= 0.0:
+                    continue
+
+                dist_mm = Z * 1000.0
+                if dist_mm < float(self.remove_space_dis):
+                    self.vision_feature_msg.cross_confidence.append(float(score))
+                    self.vision_feature_msg.cross_distance.append(float(dist_mm))
+                    self.vision_feature_msg.cross_point_vec_x.append(float(X * 1000.0 * (-1.0)))
+                    self.vision_feature_msg.cross_point_vec_y.append(float(Z * 1000.0))
+                    
+                    
 
 
         self.publish_vision_msg()

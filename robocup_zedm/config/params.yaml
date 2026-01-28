@@ -2,3 +2,7 @@ refiner_node:
   ros__parameters:
     half_win: 1  # 얼마나 주변 depth를 볼 것인가
     remove_space_dis: 10000  # mm
+
+pantilt_node:
+  ros__parameters:
+    rate_hz: 50.0

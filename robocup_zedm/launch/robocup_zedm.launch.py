@@ -62,9 +62,20 @@ def generate_launch_description():
             }
         ]
     )
+    
+    pantilt_node = Node(
+        package='robocup_zedm',
+        executable='pantilt_node',
+        name='pantilt_node',
+        output='screen',
+        parameters=[
+            params_path,
+        ]
+    )
 
     return LaunchDescription([
         zed_launch,
         detection_node,
-        refiner_node
+        refiner_node,
+        pantilt_node,
     ])

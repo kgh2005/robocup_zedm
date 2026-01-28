@@ -35,6 +35,7 @@ setup(
             # robocup_zedm/robocup_zedm/nodes/detection_node.py 의 main() 기준
             'detection_node = robocup_zedm.nodes.detection_node:main',
             'refiner_node   = robocup_zedm.nodes.refiner_node:main',
+            'pantilt_node   = robocup_zedm.nodes.pantilt_node:main',
         ],
     },
 )

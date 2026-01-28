@@ -9,6 +9,8 @@ find_package(geometry_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/BoundingBox.msg"
+  "msg/Robocupvision.msg"
+  "msg/Robocupvisionfeatures.msg"
   DEPENDENCIES std_msgs geometry_msgs
 )
 
