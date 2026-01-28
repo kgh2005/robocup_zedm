@@ -21,6 +21,13 @@
 cd ~/colcon_ws
 colcon build --symlink-install
 source install/setup.bash
+
+python3 -m pip install -U pip
+python3 -m pip install transitions
+python3 -m pip install opencv-python
+python3 -m pip install numpy
+python3 -m pip install ultralytics
+
 ```
 
 ## Run
