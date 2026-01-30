@@ -44,7 +44,7 @@ def generate_launch_description():
             'model_path': model_path,
             'rgb_topic': '/zedm/zed_node/rgb/color/rect/image',
             'device': 'cuda:0',   # GPU면
-            'imgsz': 960,
+            'imgsz': 640,
             'show_debug': True,
         }]
     )
