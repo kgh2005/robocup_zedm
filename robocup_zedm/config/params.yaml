@@ -12,7 +12,7 @@ pantilt_node:
     pan_min_deg: -70.0
 
     tilt_id: 23
-    tilt_max_deg: 0.0
+    tilt_max_deg: -5.0
     tilt_min_deg: -45.0
 
     scan_pan_speed_deg_s: 40.0
@@ -20,9 +20,6 @@ pantilt_node:
 
     img_w: 960
     img_h: 540
-
-    roi_hw: 80
-    roi_hh: 60
 
     pan_dir: -1.0
     tilt_dir: 1.0

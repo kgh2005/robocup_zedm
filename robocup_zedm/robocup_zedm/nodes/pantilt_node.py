@@ -34,9 +34,6 @@ class PanTiltNode(Node):
         self.declare_parameter("img_w", 960)
         self.declare_parameter("img_h", 540)
         
-        self.declare_parameter("roi.hw", 80)
-        self.declare_parameter("roi.hh", 60)
-        
         self.declare_parameter("pan_dir", 1.0)
         self.declare_parameter("tilt_dir", 1.0)
         
@@ -56,8 +53,8 @@ class PanTiltNode(Node):
         self.img_w = int(self.get_parameter("img_w").value)
         self.img_h = int(self.get_parameter("img_h").value)
         
-        self.roi_hw = int(self.get_parameter("roi.hw").value)
-        self.roi_hh = int(self.get_parameter("roi.hh").value)
+        self.roi_hw = self.img_w / 6
+        self.roi_hh = self.img_h / 6
         
         self.pan_dir = float(self.get_parameter("pan_dir").value)
         self.tilt_dir = float(self.get_parameter("tilt_dir").value)
@@ -166,12 +163,12 @@ class PanTiltNode(Node):
             self.tilt_deg += self.tilt_dir * self.scan_tilt_speed * dt
         elif y > bottom:
             self.tilt_deg -= self.tilt_dir * self.scan_tilt_speed * dt
+            
+        self.get_logger().info(f"Tracking ball at px ({self.ball_px}, {self.ball_py}), pan_deg: {self.pan_deg}, tilt_deg: {self.tilt_deg}")
 
         # 리밋
         self.pan_deg = max(self.pan_min_deg, min(self.pan_max_deg, self.pan_deg))
         self.tilt_deg = max(self.tilt_min_deg, min(self.tilt_max_deg, self.tilt_deg))
-        
-        self.get_logger().info(f"cam_px=({x:.1f},{y:.1f}) roi=({left:.1f}~{right:.1f},{top:.1f}~{bottom:.1f})")
 
 
 
