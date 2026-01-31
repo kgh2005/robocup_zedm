@@ -62,8 +62,8 @@ class DetectionNode(Node):
         self.bridge = CvBridge()
         self.busy = False  # 프레임 드롭(원하면 제거 가능)
 
-        self.pub = self.create_publisher(BoundingBox, "/Bounding_box", 10)
-        self.sub = self.create_subscription(Image, self.rgb_topic, self.image_callback, 10)
+        self.pub = self.create_publisher(BoundingBox, "/Bounding_box", 1)
+        self.sub = self.create_subscription(Image, self.rgb_topic, self.image_callback, 1)
 
         # ball best
         self.ball_best_conf = 0.0

@@ -14,8 +14,8 @@ class PanTiltNode(Node):
     def __init__(self):
         super().__init__("pantilt_node")
         
-        self.vision_sub = self.create_subscription(Robocupvision, "vision", self.vision_callback, 10,)
-        self.pantilt_pub = self.create_publisher(DynamixelPanTiltMsgs, "pantilt_dxl", 10,)
+        self.vision_sub = self.create_subscription(Robocupvision, "vision", self.vision_callback, 1,)
+        self.pantilt_pub = self.create_publisher(DynamixelPanTiltMsgs, "pantilt_dxl", 1,)
 
         # params
         self.declare_parameter("rate_hz", 50.0)
@@ -53,8 +53,8 @@ class PanTiltNode(Node):
         self.img_w = int(self.get_parameter("img_w").value)
         self.img_h = int(self.get_parameter("img_h").value)
         
-        self.roi_hw = self.img_w / 6
-        self.roi_hh = self.img_h / 6
+        self.roi_hw = self.img_w // 6
+        self.roi_hh = self.img_h // 6
         
         self.pan_dir = float(self.get_parameter("pan_dir").value)
         self.tilt_dir = float(self.get_parameter("tilt_dir").value)
@@ -71,11 +71,13 @@ class PanTiltNode(Node):
         
         # 스캔 꼭짓점 시퀀스
         self.scan_points = [
-            (self.pan_max_deg, self.tilt_min_deg),
-            (self.pan_min_deg, self.tilt_min_deg),
-            (self.pan_min_deg, self.tilt_max_deg),
-            (self.pan_max_deg, self.tilt_max_deg),
-            (self.pan_max_deg, self.tilt_min_deg),
+            (self.pan_max_deg, self.tilt_min_deg), # 오른쪽 아래
+            (0, self.tilt_min_deg), # 가운데 아래
+            (self.pan_min_deg, self.tilt_min_deg), # 왼쪽 아래
+            (self.pan_min_deg, self.tilt_max_deg), # 왼쪽 위
+            (0, self.tilt_max_deg), # 가운데 위
+            (self.pan_max_deg, self.tilt_max_deg), # 오른쪽 위
+            (self.pan_max_deg, self.tilt_min_deg), # 오른쪽 아래
         ]
 
         self.scan_i = 0
@@ -93,7 +95,6 @@ class PanTiltNode(Node):
         
         self.pantilt = DynamixelPanTiltMsgs()
         
-        self.ball_px, self.ball_py = self.img_w//2, self.img_h//2  # 초기값: 화면 중앙
 
         # FSM
         self.machine = Machine(
@@ -146,7 +147,7 @@ class PanTiltNode(Node):
         left, right = cx - self.roi_hw, cx + self.roi_hw
         top, bottom = cy - self.roi_hh, cy + self.roi_hh
 
-        x, y = self.ball_px, self.ball_py
+        x, y = self.ball_x, self.ball_y
 
         # ROI 안이면 정지
         if left <= x <= right and top <= y <= bottom:
@@ -164,7 +165,7 @@ class PanTiltNode(Node):
         elif y > bottom:
             self.tilt_deg -= self.tilt_dir * self.scan_tilt_speed * dt
             
-        self.get_logger().info(f"Tracking ball at px ({self.ball_px}, {self.ball_py}), pan_deg: {self.pan_deg}, tilt_deg: {self.tilt_deg}")
+        # self.get_logger().info(f"Tracking ball at px ({self.ball_x}, {self.ball_y}), pan_deg: {self.pan_deg}, tilt_deg: {self.tilt_deg}")
 
         # 리밋
         self.pan_deg = max(self.pan_min_deg, min(self.pan_max_deg, self.pan_deg))
@@ -197,16 +198,11 @@ class PanTiltNode(Node):
     
     def vision_callback(self, msg: Robocupvision):
         if msg.ball_d == 0 and msg.ball_2d_x == 0 and msg.ball_2d_y == 0:
-            self.ball_x = 0
-            self.ball_y = 0
             
             self.ball_seen = False
         else:
             self.ball_x = msg.ball_cam_x
             self.ball_y = msg.ball_cam_y
-            
-            self.ball_px = int(msg.ball_cam_x)
-            self.ball_py = int(msg.ball_cam_y)
             
             self.ball_seen = True
         

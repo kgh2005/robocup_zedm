@@ -54,3 +54,28 @@ def pixel_to_cam_coords(depth_m: np.ndarray,
     X = (float(u) - float(cx)) * Z / float(fx)
     Y = (float(v) - float(cy)) * Z / float(fy)
     return (X, Y, Z)
+
+def rotation(pan_deg: int, tilt_deg: int, X: float, Y: float, Z: float):
+    pan = np.deg2rad(float(pan_deg))
+    tilt = np.deg2rad(float(tilt_deg))
+
+    # Tilt: rotate around X axis
+    c = np.cos(tilt); s = np.sin(tilt)
+    R_tilt = np.array([
+        [1.0, 0.0, 0.0],
+        [0.0,   c,  -s],
+        [0.0,   s,   c],
+    ], dtype=np.float32)
+
+    # Pan: rotate around Y axis
+    c = np.cos(pan); s = np.sin(pan)
+    R_pan = np.array([
+        [  c, 0.0,  s],
+        [0.0, 1.0, 0.0],
+        [ -s, 0.0,  c],
+    ], dtype=np.float32)
+
+    p = np.array([float(X), float(Y), float(Z)], dtype=np.float32)
+    p2 = (R_pan @ (R_tilt @ p))   # tilt -> pan
+
+    return (float(p2[0]), float(p2[1]), float(p2[2]))

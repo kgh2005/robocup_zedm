@@ -5,7 +5,7 @@ refiner_node:
 
 pantilt_node:
   ros__parameters:
-    rate_hz: 100.0
+    rate_hz: 50.0
 
     pan_id: 22
     pan_max_deg: 70.0
@@ -23,4 +23,5 @@ pantilt_node:
 
     pan_dir: -1.0
     tilt_dir: 1.0
+    
 

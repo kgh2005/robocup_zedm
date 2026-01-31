@@ -10,19 +10,16 @@ from cv_bridge import CvBridge
 
 from vision_interfaces.msg import BoundingBox
 from vision_interfaces.msg import Robocupvision, Robocupvisionfeatures
+from dynamixel_rdk_msgs.msg import DynamixelPanTiltMsgs
 
 # utils로 분리한 함수들
-from robocup_zedm.utils.utils import pixel_to_cam_coords
+from robocup_zedm.utils.utils import pixel_to_cam_coords, rotation
 
 
 class RefinerNode(Node):
     def __init__(self):
         super().__init__('refiner_node')
-
-        # ---------- Publishers ----------
-        self.vision_pub = self.create_publisher(Robocupvision, 'vision', 10)
-        self.vision_feature_pub = self.create_publisher(Robocupvisionfeatures, 'vision_feature', 10)
-
+        
         # ---------- Parameters ----------
         self.declare_parameter('depth_topic', '/zed/zed_node/depth/depth_registered')
         self.declare_parameter('camera_info_topic', '/zedm/zed_node/rgb/color/rect/image/camera_info')
@@ -38,13 +35,29 @@ class RefinerNode(Node):
         self.half_win = int(self.get_parameter('half_win').value)
         self.remove_space_dis = int(self.get_parameter('remove_space_dis').value)
 
-        # clamp (C++와 동일)
         self.half_win = int(np.clip(self.half_win, 0, 6))
 
         self.get_logger().info("=========================")
         self.get_logger().info("Parameters loaded:")
         self.get_logger().info(f"half_win: {self.half_win}")
         self.get_logger().info(f"remove_space_dis: {self.remove_space_dis}")
+
+        # ---------- Publishers ----------
+        self.vision_pub = self.create_publisher(Robocupvision, 'vision', 1)
+        self.vision_feature_pub = self.create_publisher(Robocupvisionfeatures, 'vision_feature', 1)
+        
+        # ---------- Messages ----------
+        self.vision_msg = Robocupvision()
+        self.vision_feature_msg = Robocupvisionfeatures()
+        
+        # ---------- Subscriptions ----------
+        self.create_subscription(BoundingBox, self.bbox_topic, self.bbox_callback, 1)
+        self.create_subscription(Image, self.depth_topic, self.depth_callback, 1)
+        self.create_subscription(CameraInfo, self.camera_info_topic, self.camera_info_callback, 1)
+        self.create_subscription(DynamixelPanTiltMsgs, 'pantilt_dxl', self.pantilt_callback, 1)
+        
+        self.pan_deg = 0.0
+        self.tilt_deg = 0.0
 
         # ---------- Camera intrinsics ----------
         self.fx = 0.0
@@ -76,15 +89,6 @@ class RefinerNode(Node):
         self.robot_vec_x_mm = []
         self.robot_vec_y_mm = []
 
-        # ---------- Messages ----------
-        self.vision_msg = Robocupvision()
-        self.vision_feature_msg = Robocupvisionfeatures()
-
-        # ---------- Subscriptions ----------
-        self.create_subscription(BoundingBox, self.bbox_topic, self.bbox_callback, 10)
-        self.create_subscription(Image, self.depth_topic, self.depth_callback, 10)
-        self.create_subscription(CameraInfo, self.camera_info_topic, self.camera_info_callback, 10)
-
         self.get_logger().info("RefinerNode initialized.")
 
     # ---------------- Callbacks ----------------
@@ -98,6 +102,10 @@ class RefinerNode(Node):
         self.width = int(msg.width)
         self.height = int(msg.height)
         self.have_caminfo = True
+    
+    def pantilt_callback(self, msg: DynamixelPanTiltMsgs):
+        self.pan_deg = -msg.pan_goal_position
+        self.tilt_deg = -msg.tilt_goal_position
         
     def publish_vision_msg(self):
         self.vision_msg.ball_cam_x = int(self.ball_cam_u)
@@ -209,12 +217,14 @@ class RefinerNode(Node):
             v = int(np.clip(v, 0, h - 1))
 
             X, Y, Z = pixel_to_cam_coords(depth_copy, u, v, self.fx, self.fy, self.cx, self.cy, self.half_win)
-            if Z >= 0.0:
+            Xr, Yr, Zr = rotation(self.pan_deg, self.tilt_deg, X, Y, Z)
+            
+            if Zr >= 0.0:
                 self.ball_cam_u = u
                 self.ball_cam_v = v
-                self.ball_dist_mm = Z * 1000.0
-                self.ball_2d_x_mm = X * 1000.0 * (-1.0)
-                self.ball_2d_y_mm = Z * 1000.0
+                self.ball_dist_mm = Zr * 1000.0
+                self.ball_2d_x_mm = Xr * 1000.0 * (-1.0)
+                self.ball_2d_y_mm = Zr * 1000.0
 
 
                 # self.get_logger().info("========== ball ==========")
@@ -236,12 +246,14 @@ class RefinerNode(Node):
                 v = int(np.clip(v, 0, h - 1))
 
                 X, Y, Z = pixel_to_cam_coords(depth_copy, u, v, self.fx, self.fy, self.cx, self.cy, self.half_win)
-                if Z <= 0.0:
+                Xr, Yr, Zr = rotation(self.pan_deg, self.tilt_deg, X, Y, Z)
+                
+                if Zr <= 0.0:
                     continue
 
-                dist_mm = Z * 1000.0
-                self.vision_msg.robot_vec_x.append(X * 1000.0 * (-1.0))
-                self.robot_vec_y_mm.append(Z * 1000.0)
+                dist_mm = Zr * 1000.0
+                self.vision_msg.robot_vec_x.append(Xr * 1000.0 * (-1.0))
+                self.robot_vec_y_mm.append(Zr * 1000.0)
         
         if len(self.det_corner_line) > 0:
             # ===== LINE FEATURES =====
@@ -252,15 +264,17 @@ class RefinerNode(Node):
                 v = int(np.clip(v, 0, h - 1))
 
                 X, Y, Z = pixel_to_cam_coords(depth_copy, u, v, self.fx, self.fy, self.cx, self.cy, self.half_win)
-                if Z <= 0.0:
+                Xr, Yr, Zr = rotation(self.pan_deg, self.tilt_deg, X, Y, Z)
+                
+                if Zr <= 0.0:
                     continue
 
                 dist_mm = Z * 1000.0
                 if dist_mm < float(self.remove_space_dis):
                     self.vision_feature_msg.corner_confidence.append(float(score))
                     self.vision_feature_msg.corner_distance.append(float(dist_mm))
-                    self.vision_feature_msg.corner_point_vec_x.append(float(X * 1000.0 * (-1.0)))
-                    self.vision_feature_msg.corner_point_vec_y.append(float(Z * 1000.0))
+                    self.vision_feature_msg.corner_point_vec_x.append(float(Xr * 1000.0 * (-1.0)))
+                    self.vision_feature_msg.corner_point_vec_y.append(float(Zr * 1000.0))
         
         if len(self.det_t_line) > 0:
             # ===== LINE FEATURES =====
@@ -271,15 +285,17 @@ class RefinerNode(Node):
                 v = int(np.clip(v, 0, h - 1))
 
                 X, Y, Z = pixel_to_cam_coords(depth_copy, u, v, self.fx, self.fy, self.cx, self.cy, self.half_win)
-                if Z <= 0.0:
+                Xr, Yr, Zr = rotation(self.pan_deg, self.tilt_deg, X, Y, Z)
+                
+                if Zr <= 0.0:
                     continue
 
-                dist_mm = Z * 1000.0
+                dist_mm = Zr * 1000.0
                 if dist_mm < float(self.remove_space_dis):
                     self.vision_feature_msg.t_confidence.append(float(score))
                     self.vision_feature_msg.t_distance.append(float(dist_mm))
-                    self.vision_feature_msg.t_point_vec_x.append(float(X * 1000.0 * (-1.0)))
-                    self.vision_feature_msg.t_point_vec_y.append(float(Z * 1000.0))
+                    self.vision_feature_msg.t_point_vec_x.append(float(Xr * 1000.0 * (-1.0)))
+                    self.vision_feature_msg.t_point_vec_y.append(float(Zr * 1000.0))
                     
         if len(self.det_cross_line) > 0:
             # ===== LINE FEATURES =====
@@ -290,15 +306,17 @@ class RefinerNode(Node):
                 v = int(np.clip(v, 0, h - 1))
 
                 X, Y, Z = pixel_to_cam_coords(depth_copy, u, v, self.fx, self.fy, self.cx, self.cy, self.half_win)
-                if Z <= 0.0:
+                Xr, Yr, Zr = rotation(self.pan_deg, self.tilt_deg, X, Y, Z)
+                
+                if Zr <= 0.0:
                     continue
 
-                dist_mm = Z * 1000.0
+                dist_mm = Zr * 1000.0
                 if dist_mm < float(self.remove_space_dis):
                     self.vision_feature_msg.cross_confidence.append(float(score))
                     self.vision_feature_msg.cross_distance.append(float(dist_mm))
-                    self.vision_feature_msg.cross_point_vec_x.append(float(X * 1000.0 * (-1.0)))
-                    self.vision_feature_msg.cross_point_vec_y.append(float(Z * 1000.0))
+                    self.vision_feature_msg.cross_point_vec_x.append(float(Xr * 1000.0 * (-1.0)))
+                    self.vision_feature_msg.cross_point_vec_y.append(float(Zr * 1000.0))
                     
                     
 
