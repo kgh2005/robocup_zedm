@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import math
+
 import rclpy
 from rclpy.node import Node
 
@@ -71,13 +73,13 @@ class PanTiltNode(Node):
         
         # 스캔 꼭짓점 시퀀스
         self.scan_points = [
-            (self.pan_max_deg, self.tilt_min_deg), # 오른쪽 아래
-            (0, self.tilt_min_deg), # 가운데 아래
-            (self.pan_min_deg, self.tilt_min_deg), # 왼쪽 아래
-            (self.pan_min_deg, self.tilt_max_deg), # 왼쪽 위
-            (0, self.tilt_max_deg), # 가운데 위
-            (self.pan_max_deg, self.tilt_max_deg), # 오른쪽 위
-            (self.pan_max_deg, self.tilt_min_deg), # 오른쪽 아래
+            (self.pan_max_deg, self.tilt_min_deg), # 왼쪽 아래
+            (0.0, self.tilt_min_deg), # 가운데 아래
+            (self.pan_min_deg, self.tilt_min_deg), # 오른쪽 아래
+            (self.pan_min_deg, self.tilt_max_deg), # 오른쪽 위
+            (0.0, self.tilt_max_deg), # 가운데 위
+            (self.pan_max_deg, self.tilt_max_deg) # 왼쪽 위
+            # (self.pan_max_deg, self.tilt_min_deg), # 오른쪽 아래
         ]
 
         self.scan_i = 0
@@ -86,12 +88,20 @@ class PanTiltNode(Node):
 
         # internal state (vision side will update these)
         self.ball_seen = False 
-        self.pan = 0.0
-        self.tilt = 0.0
         
         self.ball_x, self.ball_y = 0.0, 0.0
         
+        self.ball_cam_x, self.ball_cam_y = 0.0, 0.0
+        
         self.pan_deg, self.tilt_deg = 0.0, 0.0
+        
+        self.angle_deg = 0.0
+        
+        self.just_lost = False
+        self.jump_mode = False
+        self.jump_target_i = 0
+
+
         
         self.pantilt = DynamixelPanTiltMsgs()
         
@@ -129,16 +139,17 @@ class PanTiltNode(Node):
             return max(cur - step, target)
 
     def _scan_update_constant_speed(self, dt):
-        # tick당 이동량
         pan_step = abs(self.scan_pan_speed) * dt
         tilt_step = abs(self.scan_tilt_speed) * dt
 
-        # 각 축을 일정 속도로 목표로 이동
         self.pan_deg = self._move_toward(self.pan_deg, self.scan_target_pan, pan_step)
         self.tilt_deg = self._move_toward(self.tilt_deg, self.scan_target_tilt, tilt_step)
 
-        # 도달하면 다음 꼭짓점으로
-        if (self.pan_deg == self.scan_target_pan) and (self.tilt_deg == self.scan_target_tilt):
+        # 도달 확인 (부동소수점 오차 허용)
+        pan_arrived = abs(self.pan_deg - self.scan_target_pan) < 0.1
+        tilt_arrived = abs(self.tilt_deg - self.scan_target_tilt) < 0.1
+        
+        if pan_arrived and tilt_arrived:
             self.scan_i = (self.scan_i + 1) % len(self.scan_points)
             self.scan_target_pan, self.scan_target_tilt = self.scan_points[self.scan_i]
     
@@ -170,41 +181,109 @@ class PanTiltNode(Node):
         # 리밋
         self.pan_deg = max(self.pan_min_deg, min(self.pan_max_deg, self.pan_deg))
         self.tilt_deg = max(self.tilt_min_deg, min(self.tilt_max_deg, self.tilt_deg))
-
-
-
         
+        
+    def angle_to_scan_index(self, angle_deg: float):
+        a = angle_deg % 360.0
+
+        # 0~60: 오른쪽 위(RT=5)
+        if 0.0 <= a < 60.0:
+            return 'RT'
+        # 60~120: 위(MT=4)
+        elif 60.0 <= a < 120.0:
+            return 'MT'
+        # 120~180: 왼쪽 위(LT=3)
+        elif 120.0 <= a < 180.0:
+            return 'LT'
+        # 180~240: 왼쪽 아래(LB=2)
+        elif 180.0 <= a < 240.0:
+            return 'LB'
+        # 240~300: 아래(MB=1)
+        elif 240.0 <= a < 300.0:
+            return 'MB'
+        # 300~360: 오른쪽 아래(RB=0)
+        else:
+            return 'RB'
+        
+    def _move_to_target(self, dt):
+        pan_step = abs(self.scan_pan_speed) * dt
+        tilt_step = abs(self.scan_tilt_speed) * dt
+        self.pan_deg = self._move_toward(self.pan_deg, self.scan_target_pan, pan_step)
+        self.tilt_deg = self._move_toward(self.tilt_deg, self.scan_target_tilt, tilt_step)
+        
+        # 부동소수점 오차 허용 (0.1도 이내)
+        pan_arrived = abs(self.pan_deg - self.scan_target_pan) < 0.1
+        tilt_arrived = abs(self.tilt_deg - self.scan_target_tilt) < 0.1
+        
+        return pan_arrived and tilt_arrived
+
+
+    def angle_deg_360(self, X, Y):
+        return (math.degrees(math.atan2(Y, X)) + 360.0) % 360.0
+
 
     def _tick(self):
         # 1) 상태 전이(비전 결과 기반)
         if self.ball_seen and self.state == "lost":
             self.see_ball()
         elif (not self.ball_seen) and self.state == "found":
+            # lost로 전환될 때 각도 저장
+            self.angle_deg = self.angle_deg_360(self.ball_cam_x, self.ball_cam_y)
+            angle_ = self.angle_to_scan_index(self.angle_deg)
+
+            match angle_:
+                case 'LB': self.jump_target_i = 0
+                case 'MB': self.jump_target_i = 1
+                case 'RB': self.jump_target_i = 2
+                case 'RT': self.jump_target_i = 3
+                case 'MT': self.jump_target_i = 4
+                case 'LT': self.jump_target_i = 5
+
+            # 점프 목표 설정
+            self.scan_i = self.jump_target_i
+            self.scan_target_pan, self.scan_target_tilt = self.scan_points[self.scan_i]
+            self.jump_mode = True
+
+            self.get_logger().info(
+                f"lost: jump start -> {angle_} idx={self.jump_target_i} "
+                f"target=({self.scan_target_pan},{self.scan_target_tilt})"
+            )
+            
             self.lose_ball()
             
         dt = 1.0 / self.rate_hz
             
         match self.state:
             case "lost":
-                self._scan_update_constant_speed(dt)
-                # self.get_logger().info("lost state: searching for ball...")
+                if self.jump_mode:
+                    arrived = self._move_to_target(dt)
+                    if arrived:
+                        self.jump_mode = False
+                        self.get_logger().info(f"lost: jump arrived, start scan at scan_i={self.scan_i}")
+                else:
+                    self._scan_update_constant_speed(dt)
+                
             case "found":
                 self._track_roi_px_simple(dt)
-                # self.get_logger().info("found state: tracking ball...")
-        
         
         self.pantilt_publish()
 
     
     def vision_callback(self, msg: Robocupvision):
-        if msg.ball_d == 0 and msg.ball_2d_x == 0 and msg.ball_2d_y == 0:
+        if msg.ball_d == 0 and msg.ball_x == 0 and msg.ball_y == 0:
             
             self.ball_seen = False
         else:
-            self.ball_x = msg.ball_cam_x
-            self.ball_y = msg.ball_cam_y
+            self.ball_x = msg.ball_x
+            self.ball_y = msg.ball_y
+            
+            self.ball_cam_x = msg.ball_cam_x * 0.1 # cm
+            self.ball_cam_y = -msg.ball_cam_y * 0.1 # cm
             
             self.ball_seen = True
+            
+            # self.get_logger().info(f"vision_callback: ball_seen={self.ball_seen}, ball_x={msg.ball_x}, ball_y={msg.ball_y}")
+            # self.get_logger().info(f"vision_callback: ball_cam_x={msg.ball_cam_x}, ball_cam_y={msg.ball_cam_y}")
         
         # self.get_logger().info(f"vision_callback: ball_seen={self.ball_seen}, ball_2d_x={msg.ball_2d_x}, ball_2d_y={msg.ball_2d_y}")
 

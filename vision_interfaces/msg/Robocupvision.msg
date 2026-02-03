@@ -1,5 +1,7 @@
-int64 ball_cam_x
-int64 ball_cam_y
+int64 ball_x
+int64 ball_y
+float64 ball_cam_x
+float64 ball_cam_y
 float64 ball_2d_x
 float64 ball_2d_y
 float64 ball_d

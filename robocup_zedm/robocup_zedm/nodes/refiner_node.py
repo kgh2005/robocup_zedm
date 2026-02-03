@@ -81,8 +81,10 @@ class RefinerNode(Node):
         self.det_cross_line = []
         
         # ---------- Refined results ---------- 
-        self.ball_cam_u = 0
-        self.ball_cam_v = 0
+        self.ball_u = 0
+        self.ball_v = 0
+        self.ball_cam_x = 0
+        self.ball_cam_y = 0
         self.ball_dist_mm = 0.0
         self.ball_2d_x_mm = 0.0
         self.ball_2d_y_mm = 0.0
@@ -108,8 +110,11 @@ class RefinerNode(Node):
         self.tilt_deg = -msg.tilt_goal_position
         
     def publish_vision_msg(self):
-        self.vision_msg.ball_cam_x = int(self.ball_cam_u)
-        self.vision_msg.ball_cam_y = int(self.ball_cam_v)
+        self.vision_msg.ball_x = int(self.ball_u)
+        self.vision_msg.ball_y = int(self.ball_v)
+    
+        self.vision_msg.ball_cam_x = float(self.ball_cam_x)
+        self.vision_msg.ball_cam_y = float(self.ball_cam_y)
 
 
         if self.ball_dist_mm == 0.0:
@@ -220,8 +225,10 @@ class RefinerNode(Node):
             Xr, Yr, Zr = rotation(self.pan_deg, self.tilt_deg, X, Y, Z)
             
             if Zr >= 0.0:
-                self.ball_cam_u = u
-                self.ball_cam_v = v
+                self.ball_u = u
+                self.ball_v = v
+                self.ball_cam_x = X * 1000.0
+                self.ball_cam_y = Y * 1000.0
                 self.ball_dist_mm = Zr * 1000.0
                 self.ball_2d_x_mm = Xr * 1000.0 * (-1.0)
                 self.ball_2d_y_mm = Zr * 1000.0
@@ -232,8 +239,10 @@ class RefinerNode(Node):
                 # self.get_logger().info(f"cam_pt = [X={X:.3f}, Y={Y:.3f}, Z={Z:.3f}] meters")
                 # self.get_logger().info(f"cam_pt = [X={X*100.0:.1f}, Y={Y*100.0:.1f}, Z={Z*100.0:.1f}] cm")
         else:
-            self.ball_cam_u = 0
-            self.ball_cam_v = 0
+            self.ball_u = 0
+            self.ball_v = 0
+            self.ball_cam_x = -999.0
+            self.ball_cam_y = -999.0
             self.ball_dist_mm = 0.0
             self.ball_2d_x_mm = 0.0
             self.ball_2d_y_mm = 0.0
