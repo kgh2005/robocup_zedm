@@ -22,13 +22,12 @@ CONFIDENCE_THRESHOLDS = {
 }
 
 COLORS = {
-    0: (0, 0, 255),     # 빨간색
-    1: (0, 255, 0),     # 초록색
-    2: (0, 255, 255),   # 노란색
-    3: (255, 0, 0),     # 파란색
-    4: (255, 0, 255),   # 보라색
+    0: (0, 165, 255),   # 주황색 (Orange)
+    1: (0, 255, 255),   # 노란색 (Yellow)
+    2: (255, 0, 255),   # 보라색 (Purple)
+    3: (0, 0, 255),     # 빨간색 (Red)
+    4: (0, 255, 0),     # 초록색 (Green)
 }
-
 
 class DetectionNode(Node):
     def __init__(self):
@@ -76,18 +75,22 @@ class DetectionNode(Node):
 
         try:
             bgr = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-            self.process_image(bgr)
+            gry = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+            self.process_image(bgr, gry)
         except Exception as e:
             self.get_logger().error(f"image_callback error: {e}")
         finally:
             self.busy = False
 
-    def process_image(self, bgr: np.ndarray):
+    def process_image(self, bgr: np.ndarray, gry: np.ndarray = None):
         if bgr is None or bgr.size == 0:
+            return
+        
+        if gry is None or gry.size == 0:
             return
 
         results = self.model.predict(
-            source=bgr,
+            source=gry,
             imgsz=self.imgsz,
             device=self.device,
             verbose=False,
