@@ -1,3 +1,15 @@
+detection_node:
+  ros__parameters:
+    model_path: ""  # 여기에 best.pt 경로 넣어주세요
+    rgb_topic: "/zedm/zed_node/rgb/color/rect/image"
+    device: "0"              # (권장) "0" 또는 "cpu"  /  cuda:0 대신
+    imgsz: 640
+    half: true               # FP16 사용
+    show_imshow: false       # imshow 디버그
+    publish_debug: true      # rqt 디버그 이미지 토픽 publish
+    debug_topic: "/debug_image"
+    debug_rate_hz: 15.0
+
 refiner_node:
   ros__parameters:
     half_win: 1  # 얼마나 주변 depth를 볼 것인가

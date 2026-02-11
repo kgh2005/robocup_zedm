@@ -15,7 +15,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
 
         # install config/launch/model into share
-        (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'config'), glob('config/*.yaml') + glob('config/*.rviz')),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
         (os.path.join('share', package_name, 'model'), glob('model/*')),
     ],
