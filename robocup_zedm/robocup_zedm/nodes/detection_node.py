@@ -42,6 +42,7 @@ class DetectionNode(Node):
         self.declare_parameter("device", "0")             # "0" / "cpu"
         self.declare_parameter("imgsz", 640)
         self.declare_parameter("half", True)
+        self.declare_parameter("bbox_topic", "/Bounding_box")
 
         # 디버그: imshow는 기본 OFF 권장
         self.declare_parameter("show_imshow", False)
@@ -54,6 +55,7 @@ class DetectionNode(Node):
         self.device = str(self.get_parameter("device").value)
         self.imgsz = int(self.get_parameter("imgsz").value)
         self.half = bool(self.get_parameter("half").value)
+        self.bbox_topic = self.get_parameter("bbox_topic").value
 
         self.show_imshow = bool(self.get_parameter("show_imshow").value)
         self.debug_topic = self.get_parameter("debug_topic").value
@@ -73,7 +75,7 @@ class DetectionNode(Node):
         self.bridge = CvBridge()
 
         # ---- pubs ----
-        self.pub = self.create_publisher(BoundingBox, "/Bounding_box", 1)
+        self.pub = self.create_publisher(BoundingBox, self.bbox_topic, 1)
         self.debug_pub = self.create_publisher(Image, self.debug_topic, 1)
 
         self.sub = self.create_subscription(Image, self.rgb_topic, self.image_callback, 1)

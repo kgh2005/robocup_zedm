@@ -21,7 +21,7 @@ class RefinerNode(Node):
         super().__init__('refiner_node')
         
         # ---------- Parameters ----------
-        self.declare_parameter('depth_topic', '/zed/zed_node/depth/depth_registered')
+        self.declare_parameter('depth_topic', '/zedm/zed_node/depth/depth_registered')
         self.declare_parameter('camera_info_topic', '/zedm/zed_node/rgb/color/rect/image/camera_info')
         self.declare_parameter('bbox_topic', '/Bounding_box')
 

@@ -13,6 +13,7 @@ def generate_launch_description():
 
     model_path = os.path.join(pkg_share, "model", "best.pt")
     params_path = os.path.join(pkg_share, "config", "params.yaml")
+    rviz_cfg = os.path.join(pkg_share, "config", "debug_image.rviz")
 
     zed_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -42,7 +43,7 @@ def generate_launch_description():
             {
                 "model_path": model_path,
                 "show_imshow": False,       # imshow 디버그
-                "publish_debug": False,      # debug 이미지 publish
+                "publish_debug": True,      # debug 이미지 publish
                 "debug_topic": "/debug_image",
                 "debug_rate_hz": 15.0,
             },
@@ -65,9 +66,21 @@ def generate_launch_description():
         parameters=[params_path],
     )
 
+    rviz = Node(
+        package="rviz2",
+        executable="rviz2",
+        name="rviz2",
+        output="screen",
+        arguments=["-d", rviz_cfg],
+    )
+
+    # RViz를 늦게 실행(토픽 생성 후 자동으로 붙기 쉬움)
+    rviz_delayed = TimerAction(period=8.0, actions=[rviz])
+
     return LaunchDescription([
         zed_launch,
         detection_node,
         refiner_node,
         pantilt_node,
+        rviz_delayed,
     ])

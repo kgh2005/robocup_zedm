@@ -5,13 +5,13 @@ detection_node:
     device: "0"              # (권장) "0" 또는 "cpu"  /  cuda:0 대신
     imgsz: 640
     half: true               # FP16 사용
-    show_imshow: false       # imshow 디버그
-    publish_debug: true      # rqt 디버그 이미지 토픽 publish
-    debug_topic: "/debug_image"
-    debug_rate_hz: 15.0
+    bbox_topic: "/Bounding_box"
 
 refiner_node:
   ros__parameters:
+    depth_topic: "/zedm/zed_node/depth/depth_registered"
+    camera_info_topic: "/zedm/zed_node/rgb/color/rect/image/camera_info"
+    bbox_topic: "/Bounding_box"
     half_win: 1  # 얼마나 주변 depth를 볼 것인가
     remove_space_dis: 10000  # mm
 
