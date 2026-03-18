@@ -21,21 +21,21 @@ class RefinerNode(Node):
         super().__init__('refiner_node')
         
         # ---------- Parameters ----------
-        self.declare_parameter('depth_topic', '/zedm/zed_node/depth/depth_registered')
-        self.declare_parameter('camera_info_topic', '/zedm/zed_node/rgb/color/rect/image/camera_info')
-        self.declare_parameter('bbox_topic', '/Bounding_box')
-
-        self.declare_parameter('half_win', 1)
-        self.declare_parameter('remove_space_dis', 3000)  # mm
-
-        self.depth_topic = self.get_parameter('depth_topic').value
-        self.camera_info_topic = self.get_parameter('camera_info_topic').value
-        self.bbox_topic = self.get_parameter('bbox_topic').value
-
-        self.half_win = int(self.get_parameter('half_win').value)
-        self.remove_space_dis = int(self.get_parameter('remove_space_dis').value)
+        self.declare_parameter("hz", 15.0)
+        self.declare_parameter("half_win", 1)
+        self.declare_parameter("remove_space_dis", 3000)  # mm
+        self.hz = self.get_parameter("hz").value
+        self.half_win = int(self.get_parameter("half_win").value)
+        self.remove_space_dis = int(self.get_parameter("remove_space_dis").value)
 
         self.half_win = int(np.clip(self.half_win, 0, 6))
+
+        self.declare_parameter("topic.depth_topic", "/zedm/zed_node/depth/depth_registered")
+        self.declare_parameter("topic.camera_info_topic", "/zedm/zed_node/rgb/color/rect/image/camera_info")
+        self.declare_parameter("topic.bbox_topic", "/Bounding_box")
+        self.depth_topic = self.get_parameter("topic.depth_topic").value
+        self.camera_info_topic = self.get_parameter("topic.camera_info_topic").value
+        self.bbox_topic = self.get_parameter("topic.bbox_topic").value
 
         self.get_logger().info("=========================")
         self.get_logger().info("Parameters loaded:")
@@ -58,6 +58,8 @@ class RefinerNode(Node):
         
         self.pan_deg = 0.0
         self.tilt_deg = 0.0
+
+        self.state_lock = threading.Lock()
 
         # ---------- Camera intrinsics ----------
         self.fx = 0.0
@@ -88,8 +90,10 @@ class RefinerNode(Node):
         self.ball_dist_mm = 0.0
         self.ball_2d_x_mm = 0.0
         self.ball_2d_y_mm = 0.0
-        self.robot_vec_x_mm = []
-        self.robot_vec_y_mm = []
+
+        # ---------------- Timer ----------------
+        period = 1.0 / max(self.hz, 1e-6)
+        self.timer = self.create_timer(period, self.bbox_processing)
 
         self.get_logger().info("RefinerNode initialized.")
 
@@ -106,8 +110,12 @@ class RefinerNode(Node):
         self.have_caminfo = True
     
     def pantilt_callback(self, msg: DynamixelPanTiltMsgs):
-        self.pan_deg = -msg.pan_goal_position
-        self.tilt_deg = -msg.tilt_goal_position
+        pan_deg = -msg.pan_goal_position
+        tilt_deg = -msg.tilt_goal_position
+
+        with self.state_lock:
+            self.pan_deg = pan_deg
+            self.tilt_deg = tilt_deg
         
     def publish_vision_msg(self):
         self.vision_msg.ball_x = int(self.ball_u)
@@ -168,11 +176,11 @@ class RefinerNode(Node):
 
 
     def bbox_callback(self, msg: BoundingBox):
-        self.det_ball.clear()
-        self.det_robot.clear()
-        self.det_corner_line.clear()
-        self.det_t_line.clear()
-        self.det_cross_line.clear()
+        det_ball = []
+        det_robot = []
+        det_corner_line = []
+        det_t_line = []
+        det_cross_line = []
 
         n = len(msg.class_ids)
 
@@ -188,17 +196,22 @@ class RefinerNode(Node):
             x2 = int(msg.x2[i]); y2 = int(msg.y2[i])
 
             if cls == 0:
-                self.det_ball.append((score, x1, y1, x2, y2))
+                det_ball.append((score, x1, y1, x2, y2))
             elif cls == 1:
-                self.det_robot.append((score, x1, y1, x2, y2))
+                det_robot.append((score, x1, y1, x2, y2))
             elif cls == 2:
-                self.det_corner_line.append((score, x1, y1, x2, y2))
+                det_corner_line.append((score, x1, y1, x2, y2))
             elif cls == 3:
-                self.det_t_line.append((score, x1, y1, x2, y2))
+                det_t_line.append((score, x1, y1, x2, y2))
             elif cls == 4:
-                self.det_cross_line.append((score, x1, y1, x2, y2))
+                det_cross_line.append((score, x1, y1, x2, y2))
 
-        self.bbox_processing()
+        with self.state_lock:
+            self.det_ball = det_ball
+            self.det_robot = det_robot
+            self.det_corner_line = det_corner_line
+            self.det_t_line = det_t_line
+            self.det_cross_line = det_cross_line
 
     # ---------------- Processing ----------------
     def bbox_processing(self):
@@ -209,12 +222,21 @@ class RefinerNode(Node):
             if self.latest_depth_m is None:
                 return
             depth_copy = self.latest_depth_m.copy()
+        
+        with self.state_lock:
+            det_ball = list(self.det_ball)
+            det_robot = list(self.det_robot)
+            det_corner_line = list(self.det_corner_line)
+            det_t_line = list(self.det_t_line)
+            det_cross_line = list(self.det_cross_line)
+            pan_deg = self.pan_deg
+            tilt_deg = self.tilt_deg
 
         h, w = depth_copy.shape[:2]
 
         # ===== BALL =====
-        if len(self.det_ball) > 0:
-            score, x1, y1, x2, y2 = self.det_ball[0]
+        if len(det_ball) > 0:
+            score, x1, y1, x2, y2 = det_ball[0]
             u = x1 + (x2 - x1) // 2
             v = y1 + (y2 - y1) // 2
 
@@ -222,7 +244,7 @@ class RefinerNode(Node):
             v = int(np.clip(v, 0, h - 1))
 
             X, Y, Z = pixel_to_cam_coords(depth_copy, u, v, self.fx, self.fy, self.cx, self.cy, self.half_win)
-            Xr, Yr, Zr = rotation(self.pan_deg, self.tilt_deg, X, Y, Z)
+            Xr, Yr, Zr = rotation(pan_deg, tilt_deg, X, Y, Z)
             
             if Zr >= 0.0:
                 self.ball_u = u
@@ -247,33 +269,33 @@ class RefinerNode(Node):
             self.ball_2d_x_mm = 0.0
             self.ball_2d_y_mm = 0.0
         
-        if len(self.det_robot) > 0:
-            for score, x1, y1, x2, y2 in self.det_robot:
+        if len(det_robot) > 0:
+            for score, x1, y1, x2, y2 in det_robot:
                 u = x1 + (x2 - x1) // 2
                 v = y1 + (y2 - y1) // 2
                 u = int(np.clip(u, 0, w - 1))
                 v = int(np.clip(v, 0, h - 1))
 
                 X, Y, Z = pixel_to_cam_coords(depth_copy, u, v, self.fx, self.fy, self.cx, self.cy, self.half_win)
-                Xr, Yr, Zr = rotation(self.pan_deg, self.tilt_deg, X, Y, Z)
+                Xr, Yr, Zr = rotation(pan_deg, tilt_deg, X, Y, Z)
                 
                 if Zr <= 0.0:
                     continue
 
                 dist_mm = Zr * 1000.0
                 self.vision_msg.robot_vec_x.append(Xr * 1000.0 * (-1.0))
-                self.robot_vec_y_mm.append(Zr * 1000.0)
+                self.vision_msg.robot_vec_y.append(Zr * 1000.0)
         
-        if len(self.det_corner_line) > 0:
+        if len(det_corner_line) > 0:
             # ===== LINE FEATURES =====
-            for score, x1, y1, x2, y2 in self.det_corner_line:
+            for score, x1, y1, x2, y2 in det_corner_line:
                 u = x1 + (x2 - x1) // 2
                 v = y1 + (y2 - y1) // 2
                 u = int(np.clip(u, 0, w - 1))
                 v = int(np.clip(v, 0, h - 1))
 
                 X, Y, Z = pixel_to_cam_coords(depth_copy, u, v, self.fx, self.fy, self.cx, self.cy, self.half_win)
-                Xr, Yr, Zr = rotation(self.pan_deg, self.tilt_deg, X, Y, Z)
+                Xr, Yr, Zr = rotation(pan_deg, tilt_deg, X, Y, Z)
                 
                 if Zr <= 0.0:
                     continue
@@ -285,16 +307,16 @@ class RefinerNode(Node):
                     self.vision_feature_msg.corner_point_vec_x.append(float(Xr * 1000.0 * (-1.0)))
                     self.vision_feature_msg.corner_point_vec_y.append(float(Zr * 1000.0))
         
-        if len(self.det_t_line) > 0:
+        if len(det_t_line) > 0:
             # ===== LINE FEATURES =====
-            for score, x1, y1, x2, y2 in self.det_t_line:
+            for score, x1, y1, x2, y2 in det_t_line:
                 u = x1 + (x2 - x1) // 2
                 v = y1 + (y2 - y1) // 2
                 u = int(np.clip(u, 0, w - 1))
                 v = int(np.clip(v, 0, h - 1))
 
                 X, Y, Z = pixel_to_cam_coords(depth_copy, u, v, self.fx, self.fy, self.cx, self.cy, self.half_win)
-                Xr, Yr, Zr = rotation(self.pan_deg, self.tilt_deg, X, Y, Z)
+                Xr, Yr, Zr = rotation(pan_deg, tilt_deg, X, Y, Z)
                 
                 if Zr <= 0.0:
                     continue
@@ -306,16 +328,16 @@ class RefinerNode(Node):
                     self.vision_feature_msg.t_point_vec_x.append(float(Xr * 1000.0 * (-1.0)))
                     self.vision_feature_msg.t_point_vec_y.append(float(Zr * 1000.0))
                     
-        if len(self.det_cross_line) > 0:
+        if len(det_cross_line) > 0:
             # ===== LINE FEATURES =====
-            for score, x1, y1, x2, y2 in self.det_cross_line:
+            for score, x1, y1, x2, y2 in det_cross_line:
                 u = x1 + (x2 - x1) // 2
                 v = y1 + (y2 - y1) // 2
                 u = int(np.clip(u, 0, w - 1))
                 v = int(np.clip(v, 0, h - 1))
 
                 X, Y, Z = pixel_to_cam_coords(depth_copy, u, v, self.fx, self.fy, self.cx, self.cy, self.half_win)
-                Xr, Yr, Zr = rotation(self.pan_deg, self.tilt_deg, X, Y, Z)
+                Xr, Yr, Zr = rotation(pan_deg, tilt_deg, X, Y, Z)
                 
                 if Zr <= 0.0:
                     continue
